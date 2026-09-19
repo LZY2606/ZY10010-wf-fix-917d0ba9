@@ -165,7 +165,10 @@ func (f *Parser) ParseURLWithContext(feedURL string, ctx context.Context) (feed 
 
 	if resp != nil {
 		defer func() {
-			if ce := resp.Body.Close(); ce != nil {
+			// A Close error is only reported when nothing earlier failed:
+			// it must not mask an HTTPError, ErrResponseTooLarge, or a
+			// read/parse error already produced for this response.
+			if ce := resp.Body.Close(); ce != nil && err == nil {
 				err = ce
 			}
 		}()
@@ -222,9 +225,10 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 	n, err := l.r.Read(p)
 	if int64(n) > l.left {
 		n = int(l.left)
-		if err == nil || errors.Is(err, io.EOF) {
-			err = ErrResponseTooLarge
-		}
+		// The response provably exceeds the limit, so ErrResponseTooLarge
+		// takes priority over any error (including a non-EOF transport
+		// error) delivered with these same bytes.
+		err = ErrResponseTooLarge
 	}
 	l.left -= int64(n)
 	l.err = err
@@ -305,6 +309,5 @@ func (f *Parser) httpClient() *http.Client {
 	if f.Client != nil {
 		return f.Client
 	}
-	f.Client = defaultClient
-	return f.Client
+	return defaultClient
 }
